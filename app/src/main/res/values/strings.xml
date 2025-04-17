@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Bluetooth Logger</string>
+    <string name="app_name">bluetooth-weightScale</string>
     <string name="devices">Paired Devices</string>
 
     <string name="bluetooth_permission_title">Bluetooth permission</string>

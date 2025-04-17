@@ -1,4 +1,4 @@
-package de.kai_morich.simple_bluetooth_terminal;
+package com.scale.weight.bluetooth;
 
 import android.text.Editable;
 import android.text.InputType;

@@ -1,21 +1,24 @@
-package de.kai_morich.simple_bluetooth_terminal;
+package com.scale.weight.bluetooth;
 
 import android.Manifest;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.content.ComponentName;
+import android.content.ContentResolver;
+import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
 import android.provider.MediaStore;
-import android.text.Editable;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.method.ScrollingMovementMethod;
@@ -24,7 +27,6 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -34,6 +36,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.app.ActivityCompat;
 import androidx.fragment.app.Fragment;
 
 import java.io.File;
@@ -49,8 +52,6 @@ import java.util.Locale;
 public class TerminalFragment extends Fragment implements ServiceConnection, SerialListener {
 
     private static final String TAG = "TerminalFragment";
-    private static final String DATE_FORMAT = "MMM dd, yyyy - HH:mm:ss.sss";
-    private static final String FILENAME_FORMAT = "yyyyMMdd_HHmmss";
 
     private enum Connected { False, Pending, True }
 
@@ -60,19 +61,8 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
     private TextView receiveText;
     private Connected connected = Connected.False;
     private boolean initialStart = true;
-    private boolean pendingNewline = false;
-    private String newline = TextUtil.newline_crlf;
 
-    private final SimpleDateFormat timestampFormat = new SimpleDateFormat(DATE_FORMAT, Locale.US);
-    private final SimpleDateFormat fileNameFormat = new SimpleDateFormat(FILENAME_FORMAT, Locale.US);
-
-    private final ActivityResultLauncher<String> requestPermissionLauncher = registerForActivityResult(
-            new ActivityResultContracts.RequestPermission(),
-            isGranted -> {
-                if (!isGranted) {
-                    showToast("Storage permission denied, cannot save file");
-                }
-            });
+    private ActivityResultLauncher<String> requestStoragePermissionLauncher;
 
     /*
      * Lifecycle
@@ -83,6 +73,10 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         setHasOptionsMenu(true);
         setRetainInstance(true);
         deviceAddress = getArguments().getString("device");
+        requestStoragePermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> BluetoothUtil.onStoragePermissionResult(this, granted, () -> {})
+        );
     }
 
     @Override
@@ -188,43 +182,6 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         inflater.inflate(R.menu.menu_terminal, menu);
     }
 
-    @Override
-    public void onPrepareOptionsMenu(@NonNull Menu menu) {
-        MenuItem notificationItem = menu.findItem(R.id.backgroundNotification);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationItem.setChecked(service != null && service.areNotificationsEnabled());
-        } else {
-            notificationItem.setChecked(true);
-            notificationItem.setEnabled(false);
-        }
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        int id = item.getItemId();
-        if (id == R.id.clear) {
-            receiveText.setText("");
-            return true;
-        } else if (id == R.id.backgroundNotification) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (!service.areNotificationsEnabled() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 0);
-                } else {
-                    showNotificationSettings();
-                }
-            }
-            return true;
-        } else if (id == R.id.save_last_value) {
-            saveFile(true);
-            return true;
-        } else if (id == R.id.save_as_full) {
-            saveFile(false);
-            return true;
-        } else {
-            return super.onOptionsItemSelected(item);
-        }
-    }
-
     /*
      * Serial + UI
      */
@@ -254,34 +211,16 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
     private void receive(ArrayDeque<byte[]> datas) {
         SpannableStringBuilder spn = new SpannableStringBuilder();
 
-        for (byte[] data : datas) {
-            String timestamp = timestampFormat.format(new Date());
-            String msg = new String(data);
+        byte[] lastData = datas.getLast();
 
-            // Process newlines
-            if (newline.equals(TextUtil.newline_crlf) && !msg.isEmpty()) {
-                msg = msg.replace(TextUtil.newline_crlf, TextUtil.newline_lf);
-                if (pendingNewline && msg.charAt(0) == '\n') {
-                    // Handle pending newline
-                    if (spn.length() >= 2) {
-                        spn.delete(spn.length() - 2, spn.length());
-                    } else {
-                        Editable edt = receiveText.getEditableText();
-                        if (edt != null && edt.length() >= 2) {
-                            edt.delete(edt.length() - 2, edt.length());
-                        }
-                    }
-                }
-                pendingNewline = msg.charAt(msg.length() - 1) == '\r';
-            }
+        String msg = new String(lastData);
 
-            String processedMsg = (String) TextUtil.toCaretString(msg, newline.length() != 0);
-            String displayMsg = timestamp + " " + processedMsg;
-            Log.d(TAG, "Appending to receiveText: " + displayMsg);
-            spn.append(displayMsg);
-        }
+        String[] res = msg.split("\n");
 
-        receiveText.append(spn);
+        String processedValue = processValue(res[res.length-1]);
+        receiveText.setText(processedValue);
+
+        saveLastProcessedValue(processedValue);
     }
 
     private void status(String str) {
@@ -291,7 +230,7 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         SpannableStringBuilder spn = new SpannableStringBuilder(str + '\n');
         spn.setSpan(new ForegroundColorSpan(activity.getResources().getColor(R.color.colorStatusText)),
                 0, spn.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        receiveText.append(spn);
+        receiveText.setText(spn);
     }
 
     private void showNotificationSettings() {
@@ -302,106 +241,6 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         intent.setAction("android.settings.APP_NOTIFICATION_SETTINGS");
         intent.putExtra("android.provider.extra.APP_PACKAGE", activity.getPackageName());
         startActivity(intent);
-    }
-
-    private void saveFile(boolean isLastValue) {
-        Activity activity = getActivity();
-        if (activity == null) return;
-
-        String timestamp = fileNameFormat.format(new Date());
-        String fileName = "BTLOGS_" + timestamp + ".txt";
-        String content;
-
-        if (isLastValue) {
-            String fullText = receiveText.getText().toString();
-            if (fullText.isEmpty()) {
-                showToast("No data to save");
-                return;
-            }
-
-            String[] lines = fullText.split("\n");
-            String lastLine = "";
-            for (int i = lines.length - 1; i >= 0; i--) {
-                if (!lines[i].trim().isEmpty()) {
-                    lastLine = lines[i].trim();
-                    break;
-                }
-            }
-
-            if (lastLine.isEmpty()) {
-                showToast("No data to save");
-                return;
-            }
-            content = lastLine;
-            Log.d(TAG, "Saving last value: " + content);
-        } else {
-            content = receiveText.getText().toString();
-            if (content.isEmpty()) {
-                showToast("No data to save");
-                return;
-            }
-            Log.d(TAG, "Saving full content length: " + content.length());
-        }
-
-        String formattedDate = new SimpleDateFormat("MMM dd, yyyy", Locale.US).format(new Date());
-        String formattedTime = new SimpleDateFormat("HH:mm:ss.sss", Locale.US).format(new Date());
-        String formattedContent = formattedDate + " " + formattedTime + "\n" + content;
-
-        saveFileToStorage(activity, fileName, formattedContent);
-    }
-
-    private void saveFileToStorage(Activity activity, String fileName, String content) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveFileWithMediaStore(activity, fileName, content);
-            } else {
-                saveFileWithDirectAccess(activity, fileName, content);
-            }
-        } catch (IOException e) {
-            showToast("Error saving file: " + e.getMessage());
-        }
-    }
-
-    private void saveFileWithMediaStore(Activity activity, String fileName, String content) throws IOException {
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
-        values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
-        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-
-        Uri uri = null;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            uri = activity.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-        }
-        if (uri != null) {
-            try (OutputStream outputStream = activity.getContentResolver().openOutputStream(uri)) {
-                if (outputStream != null) {
-                    outputStream.write(content.getBytes());
-                }
-            }
-            values.clear();
-            values.put(MediaStore.MediaColumns.IS_PENDING, 0);
-            activity.getContentResolver().update(uri, values, null, null);
-            showToast("File saved to Downloads");
-        } else {
-            showToast("Failed to create file");
-        }
-    }
-
-    private void saveFileWithDirectAccess(Activity activity, String fileName, String content) throws IOException {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-                activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
-                        android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            File file = new File(downloadsDir, fileName);
-            try (FileOutputStream fos = new FileOutputStream(file)) {
-                fos.write(content.getBytes());
-                showToast("File saved to Downloads");
-            }
-        } else {
-            requestPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-            showToast("Storage permission required");
-        }
     }
 
     private void showToast(String message) {
@@ -451,5 +290,112 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
     public void onSerialIoError(Exception e) {
         status("connection lost: " + e.getMessage());
         disconnect();
+    }
+
+    public String processValue(String input) {
+        if (input == null) return "";
+
+        String result = input.trim();
+
+        result = result.replaceFirst("^\\+", "");
+
+        result = result.replaceAll("(?i)\\s*(oz|lb|g\\(t\\)|g|kg)$", "");
+
+        return result.trim();
+    }
+
+    private void saveLastProcessedValue(String processedValue) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+
+        String fileName = "BT_WEIGHT_LOGS.txt";
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentResolver resolver = activity.getContentResolver();
+                Uri contentUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+
+                String selection = MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " +
+                        MediaStore.MediaColumns.RELATIVE_PATH + "=?";
+                String relativePath = Environment.DIRECTORY_DOWNLOADS + "/";
+                String[] selectionArgs = new String[]{fileName, relativePath};
+
+                Cursor cursor = resolver.query(contentUri, null, selection, selectionArgs, null);
+                if (cursor != null) {
+                    while (cursor.moveToNext()) {
+                        long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID));
+                        Uri deleteUri = ContentUris.withAppendedId(contentUri, id);
+                        resolver.delete(deleteUri, null, null);
+                    }
+                    cursor.close();
+                }
+
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+                values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+
+                Uri uri = resolver.insert(contentUri, values);
+                if (uri != null) {
+                    try (OutputStream os = resolver.openOutputStream(uri, "wt")) {
+                        if (os != null) {
+                            os.write(processedValue.getBytes());
+                            Log.d(TAG, "File saved successfully via MediaStore");
+                        }
+                    }
+                } else {
+                    Log.e(TAG, "Failed to create new file via MediaStore");
+                    attemptDirectFileSave(activity, fileName, processedValue);
+                }
+
+            } else {
+                if (BluetoothUtil.hasStoragePermissions(this, requestStoragePermissionLauncher)) {
+                    File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                    if (!downloadsDir.exists()) {
+                        downloadsDir.mkdirs();
+                    }
+
+                    File file = new File(downloadsDir, fileName);
+                    try (FileOutputStream fos = new FileOutputStream(file, false)) {
+                        fos.write(processedValue.getBytes());
+                        Log.d(TAG, "File saved via direct access");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving file: " + e.getMessage(), e);
+        }
+    }
+
+    private void attemptDirectFileSave(Activity activity, String fileName, String content) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                        PackageManager.PERMISSION_GRANTED) {
+
+            Log.d(TAG, "No storage permission, requesting...");
+            ActivityCompat.requestPermissions(activity,
+                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    100);
+            return;
+        }
+
+        try {
+            File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (!downloadsDir.exists()) {
+                if (!downloadsDir.mkdirs()) {
+                    Log.e(TAG, "Could not create Downloads directory");
+                    return;
+                }
+            }
+
+            File file = new File(downloadsDir, fileName);
+            try (FileOutputStream fos = new FileOutputStream(file, false)) {
+                fos.write(content.getBytes());
+                Log.d(TAG, "File saved successfully via direct access");
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Direct file save failed: " + e.getMessage(), e);
+            showToast("Error saving file: " + e.getMessage());
+        }
     }
 }

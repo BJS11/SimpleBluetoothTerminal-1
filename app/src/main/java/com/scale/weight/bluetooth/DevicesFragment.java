@@ -1,4 +1,4 @@
-package de.kai_morich.simple_bluetooth_terminal;
+package com.scale.weight.bluetooth;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
@@ -35,6 +35,8 @@ public class DevicesFragment extends ListFragment {
     private Menu menu;
     private boolean permissionMissing;
 
+    ActivityResultLauncher<String> requestStoragePermissionLauncher;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -59,6 +61,10 @@ public class DevicesFragment extends ListFragment {
         requestBluetoothPermissionLauncherForRefresh = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
                 granted -> BluetoothUtil.onPermissionsResult(this, granted, this::refresh));
+        requestStoragePermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> BluetoothUtil.onStoragePermissionResult(this, granted, this::refresh)
+        );
     }
 
     @Override
@@ -108,6 +114,9 @@ public class DevicesFragment extends ListFragment {
     @SuppressLint("MissingPermission")
     void refresh() {
         listItems.clear();
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+            BluetoothUtil.hasStoragePermissions(this, requestStoragePermissionLauncher);
+        }
         if(bluetoothAdapter != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 permissionMissing = getActivity().checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED;

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="200dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@android:color/black"
+    android:padding="8dp"
+    android:gravity="center"
+    android:layout_margin="8dp"
+    android:elevation="4dp">
+
+    <!-- View for streaming data (when connected) -->
+    <TextView
+        android:id="@+id/receive_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="24sp"
+        android:textColor="@android:color/white"
+        android:background="@android:color/black"
+        android:padding="8dp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:visibility="gone" />
+
+    <!-- View for "Not Connected" state -->
+    <LinearLayout
+        android:id="@+id/not_connected_layout"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="visible">
+
+        <ImageView
+            android:id="@+id/switch_image"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_switch"
+            android:contentDescription="Switch Icon" />
+
+        <TextView
+            android:id="@+id/not_connected_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Not Connected"
+            android:textSize="14sp"
+            android:textColor="@android:color/white"
+            android:layout_marginTop="4dp" />
+    </LinearLayout>
+
+</LinearLayout>

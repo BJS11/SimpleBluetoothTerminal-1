@@ -43,17 +43,19 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.Arrays;
-import java.util.Date;
-import java.util.Locale;
+import java.util.HashSet;
+import java.util.Set;
 
 public class TerminalFragment extends Fragment implements ServiceConnection, SerialListener {
 
     private static final String TAG = "TerminalFragment";
 
     private enum Connected { False, Pending, True }
+
+    // Static set to track connected devices
+    private static final Set<String> connectedDevices = new HashSet<>();
 
     private String deviceAddress;
     private SerialService service;
@@ -81,8 +83,8 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
 
     @Override
     public void onDestroy() {
-        if (connected != Connected.False)
-            disconnect();
+//        if (connected != Connected.False)
+//            disconnect();
         Activity activity = getActivity();
         if (activity != null) {
             activity.stopService(new Intent(activity, SerialService.class));
@@ -206,6 +208,8 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         if (service != null) {
             service.disconnect();
         }
+        // Remove the device from the connected set
+        connectedDevices.remove(deviceAddress);
     }
 
     private void receive(ArrayDeque<byte[]> datas) {
@@ -266,6 +270,8 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
     public void onSerialConnect() {
         status("connected");
         connected = Connected.True;
+        // Add the device to the connected set
+        connectedDevices.add(deviceAddress);
     }
 
     @Override
@@ -396,6 +402,18 @@ public class TerminalFragment extends Fragment implements ServiceConnection, Ser
         } catch (IOException e) {
             Log.e(TAG, "Direct file save failed: " + e.getMessage(), e);
             showToast("Error saving file: " + e.getMessage());
+        }
+    }
+
+    // Static method to check if a device is connected
+    public static boolean isDeviceConnected(BluetoothDevice device) {
+        return device != null && connectedDevices.contains(device.getAddress());
+    }
+
+    // Static method to disconnect a device
+    public static void disconnectDevice(BluetoothDevice device) {
+        if (device != null) {
+            connectedDevices.remove(device.getAddress());
         }
     }
 }

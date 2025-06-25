@@ -49,9 +49,9 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
 
-        if (isTrialExpired()) {
-            showTrialExpiredDialog();
-        }
+//        if (isTrialExpired()) {
+//            showTrialExpiredDialog();
+//        }
 
         // Initialize UI components
         Toolbar toolbar = findViewById(R.id.toolbar);
